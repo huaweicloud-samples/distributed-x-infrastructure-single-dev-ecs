@@ -1,0 +1,9 @@
+{
+    "region": "cn-north-4",
+    "name_prefix": "single-ecs-dev",
+    "ecs_name": "dev",
+    "nick_name": "dev",
+    "key_file": "~/.ssh/id_rsa",
+    "dns_zone_id": "",
+    "dns_domain": ""
+}

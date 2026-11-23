@@ -1,0 +1,31 @@
+# ============================================================================
+# terraform.tfvars 示例 —— 复制为 terraform.tfvars 后按需修改
+# 凭据（public_key）建议从环境变量注入，避免落盘
+# ============================================================================
+
+region            = "cn-north-4"
+name_prefix       = "single-ecs-dev"
+ecs_name          = "dev"
+nick_name         = "dev"
+
+# 计算规格（已显式写死）
+flavor            = "s6.large.2"
+image_name        = "CentOS 7.9 64bit"
+system_disk_type  = "GPSSD"
+system_disk_size  = 100
+
+# SSH 公钥：推荐改用环境变量注入（见下），此处仅为示例可填
+# public_key      = "ssh-rsa AAAA... <comment>"
+# 或用命令注入：terraform apply -var="public_key=$(cat ~/.ssh/id_rsa.pub)"
+
+# 安全：建议收敛到运维机 IP，例如 "1.2.3.4/32"
+ssh_allowed_cidr = "0.0.0.0/0"
+
+# EIP
+eip_bandwidth_size = 5
+eip_charge_mode    = "traffic"
+
+# 可选 DNS（默认关闭）。启用时须填 account_domain（IAM 账号域名）
+dns_zone_id  = ""
+dns_domain   = ""
+account_domain = ""

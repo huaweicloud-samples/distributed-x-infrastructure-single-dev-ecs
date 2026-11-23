@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+ECS 启停 / 状态管理（start/stop/status）。
+
+用法：
+    ./ecs status
+    ./ecs start
+    ./ecs stop
+
+凭据：环境变量 HW_ACCESS_KEY / HW_SECRET_KEY / HW_REGION_NAME（不落盘）。
+依赖：huaweicloudsdkecs、huaweicloudsdkcore
+      pip install -r requirements.txt
+"""
+import os
+import sys
+import json
+
+from huaweicloudsdkcore.auth.credentials import BasicCredentials
+from huaweicloudsdkecs.v2 import (
+    EcsClient,
+    ListServersDetailsRequest,
+    ShowServerRequest,
+    StartServersRequest,
+    StopServersRequest,
+)
+from huaweicloudsdkecs.v2.region.ecs_region import EcsRegion
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONFIG = os.path.join(ROOT, "configs", "config.json")
+OUTPUTS = os.path.join(ROOT, "outputs.json")
+
+
+def load():
+    with open(CONFIG) as fh:
+        cfg = json.load(fh)
+    region = cfg.get("region") or os.environ.get("HW_REGION_NAME")
+    ecs_id = None
+    if os.path.exists(OUTPUTS):
+        with open(OUTPUTS) as fh:
+            out = json.load(fh)
+        ecs_id = (out.get("ecs_id") or {}).get("value")
+    ak = os.environ.get("HW_ACCESS_KEY")
+    sk = os.environ.get("HW_SECRET_KEY")
+    if not (ak and sk and region):
+        print("缺少凭据/区域：请设置 HW_ACCESS_KEY、HW_SECRET_KEY、HW_REGION_NAME"
+              "（或在 configs/config.json 配置 region）")
+        sys.exit(2)
+    return cfg, region, ecs_id, ak, sk
+
+
+def make_client(region, ak, sk):
+    creds = BasicCredentials(ak, sk)
+    return (
+        EcsClient.new_builder()
+        .with_credentials(creds)
+        .with_region(EcsRegion.value_of(region))
+        .build()
+    )
+
+
+def resolve_id(c, cfg, ecs_id):
+    if ecs_id:
+        return ecs_id
+    name = "%s-%s" % (cfg.get("name_prefix", "single-ecs-dev"), cfg.get("ecs_name", "dev"))
+    resp = c.list_servers_details(ListServersDetailsRequest(name=name))
+    if resp.servers:
+        return resp.servers[0].id
+    return None
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("用法：./ecs status | start | stop")
+        sys.exit(1)
+    action = sys.argv[1]
+    cfg, region, ecs_id, ak, sk = load()
+    cli = make_client(region, ak, sk)
+    ecs_id = resolve_id(cli, cfg, ecs_id)
+    if not ecs_id:
+        print("找不到 ECS 实例，请先 terraform apply 并生成 outputs.json（terraform output -json > outputs.json）")
+        sys.exit(3)
+
+    server = cli.show_server(ShowServerRequest(server_id=ecs_id)).server
+    status = getattr(server, "status", "unknown")
+
+    if action == "status":
+        print("ecs instance %s is %s" % (ecs_id, status))
+    elif action == "start":
+        if status == "SHUTOFF":
+            cli.start_servers(StartServersRequest(server_id=ecs_id))
+            print("starting ecs instance %s" % ecs_id)
+        else:
+            print("ecs instance %s is not SHUTOFF, cannot start (current: %s)" % (ecs_id, status))
+    elif action == "stop":
+        if status == "ACTIVE":
+            cli.stop_servers(StopServersRequest(server_id=ecs_id))
+            print("stopping ecs instance %s" % ecs_id)
+        else:
+            print("ecs instance %s is not ACTIVE, cannot stop (current: %s)" % (ecs_id, status))
+    else:
+        print("未知动作：%s" % action)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

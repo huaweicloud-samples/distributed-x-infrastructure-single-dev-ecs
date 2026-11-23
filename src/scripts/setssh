@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+更新 ~/.ssh/config。
+把 ECS 的公网 IP 与 nick_name 写入 SSH 配置，之后可直接 `ssh <nick_name>` 连接。
+重复运行会就地更新已有 Host 块的 HostName，不会重复追加。
+
+用法：
+    ./setssh
+
+数据源：
+    - outputs.json（terraform output -json 生成）取 ecs_id / eip_address
+    - configs/config.json 取 nick_name / key_file
+"""
+import os
+import json
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONFIG = os.path.join(ROOT, "configs", "config.json")
+OUTPUTS = os.path.join(ROOT, "outputs.json")
+SSH_CONFIG = os.path.expanduser("~/.ssh/config")
+
+
+def main():
+    with open(CONFIG) as fh:
+        cfg = json.load(fh)
+    nick = cfg.get("nick_name", "dev")
+    key_file = os.path.expanduser(cfg.get("key_file", "~/.ssh/id_rsa"))
+
+    if not os.path.exists(OUTPUTS):
+        print("找不到 outputs.json，请先执行：terraform output -json > outputs.json")
+        raise SystemExit(3)
+    with open(OUTPUTS) as fh:
+        out = json.load(fh)
+    eip = (out.get("eip_address") or {}).get("value")
+    if not eip:
+        print("outputs.json 中缺少 eip_address，请确认 terraform apply 已成功并重新生成 outputs.json")
+        raise SystemExit(3)
+
+    print("alias IP address: %s" % eip)
+    print("ssh nickname: %s" % nick)
+    print("ssh keyFile: %s" % key_file)
+
+    os.makedirs(os.path.dirname(SSH_CONFIG), exist_ok=True)
+    lines = []
+    if os.path.exists(SSH_CONFIG):
+        with open(SSH_CONFIG) as fh:
+            lines = fh.read().splitlines()
+
+    new_block = [
+        "Host %s" % nick,
+        "    HostName %s" % eip,
+        "    IdentityFile %s" % key_file,
+        "    User root",
+    ]
+
+    # 就地更新：若已存在该 Host 块，替换其 HostName；否则追加
+    out_lines = []
+    i = 0
+    updated = False
+    in_target = False
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if stripped == ("Host %s" % nick):
+            in_target = True
+            updated = True
+            out_lines.append(line)
+            i += 1
+            # 跳过该块内原有 HostName / IdentityFile / User 行
+            while i < len(lines) and not lines[i].strip().startswith("Host "):
+                l = lines[i].strip()
+                if l.startswith("HostName") or l.startswith("IdentityFile") or l.startswith("User"):
+                    i += 1
+                    continue
+                out_lines.append(lines[i])
+                i += 1
+            # 写入最新三行（若块内原本缺失则补齐）
+            out_lines.extend(["    HostName %s" % eip,
+                              "    IdentityFile %s" % key_file,
+                              "    User root"])
+            continue
+        out_lines.append(line)
+        i += 1
+
+    if not updated:
+        if out_lines and out_lines[-1].strip():
+            out_lines.append("")
+        out_lines.extend(new_block)
+
+    content = "\n".join(out_lines).rstrip() + "\n"
+    with open(SSH_CONFIG, "w") as fh:
+        fh.write(content)
+    print("updated %s" % SSH_CONFIG)
+    print("now: ssh %s" % nick)
+
+
+if __name__ == "__main__":
+    main()
